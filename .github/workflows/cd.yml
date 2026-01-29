@@ -55,14 +55,13 @@ jobs:
 
       - name: Ensure remote dir exists
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "\
-            mkdir -p ${REMOTE_APP_DIR}"
+          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "mkdir -p \${REMOTE_APP_DIR}"
 
       - name: Copy files to VM (scp)
         run: |
           scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r \
             docker-compose.yml docker-compose.prod.yml nginx \
-            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:${REMOTE_APP_DIR}/
+            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:${{ secrets.REMOTE_APP_DIR }}/ # 이 부분은 secrets로 직접 넣는 게 안전합니다.
 
       - name: Pull & restart on VM
         run: |
