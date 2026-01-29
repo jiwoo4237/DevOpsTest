@@ -56,20 +56,20 @@ jobs:
 
       - name: Ensure remote dir exists
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "mkdir -p \${REMOTE_APP_DIR}"
+          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "mkdir -p ${{ secrets.REMOTE_APP_DIR }}"
 
       - name: Copy files to VM (scp)
         run: |
           scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -r \
             docker-compose.yml docker-compose.prod.yml nginx \
-            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:${{ secrets.REMOTE_APP_DIR }}/ # 이 부분은 secrets로 직접 넣는 게 안전합니다.
+            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:${{ secrets.REMOTE_APP_DIR }}/
 
       - name: Pull & restart on VM
         run: |
-          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "\
+          ssh -i ~/.ssh/id_rsa ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} " \
             set -euo pipefail; \
-            cd ${REMOTE_APP_DIR} && \
-            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME} && \
+            cd ${{ secrets.REMOTE_APP_DIR }} && \
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} && \
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && \
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans" 
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans"
 
