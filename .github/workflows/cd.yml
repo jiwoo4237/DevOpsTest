@@ -64,7 +64,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ env.IMG }}
-          pkg-types: 'os,library'
+          #pkg-types: 'os,library'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
           format: sarif
