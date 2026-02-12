@@ -200,8 +200,8 @@ jobs:
         run: |
           ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "
             cd '${{ env.REMOTE_DIR }}' &&
-            docker compose -f docker-compose-prod.yml down --remove-orphans || true &&
-            docker compose -f docker-compose-prod.yml up -d nginx web
+            docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
+            docker compose -f docker-compose.prod.yml up -d nginx web
           "
 
       # ── 4. HTTP 응답 대기 ───────────────────────────────────────────────
