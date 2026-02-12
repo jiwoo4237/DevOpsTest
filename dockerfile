@@ -2,21 +2,17 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# 1. OS 패키지 업데이트
+# 1. OS 패키지 업데이트 및 pip 강제 업데이트
+# --no-cache-dir를 사용하여 항상 최신 상태를 유지하게 합니다.
 RUN apt-get update && apt-get upgrade -y && \
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. pip 자체를 최신 버전으로 업데이트 (23.0.1의 취약점 회피)
-# --upgrade pip를 먼저 실행하여 최신 보안 패치가 적용된 pip를 확보합니다.
-RUN python -m pip install --upgrade pip
-
-# 3. setuptools 및 기타 도구 설치
-RUN pip install setuptools==78.1.1 wheel
-
-# 4. 의존성 설치
+# 2. 의존성 파일 복사 및 설치
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 3. 앱 소스 복사
 COPY . .
 
 EXPOSE 5000
