@@ -10,8 +10,8 @@ import FinanceDataReader as fdr
 # 1. 설정 및 초기화
 # ==========================================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'devops-secret-key-1234'  # 보안을 위해 실제 배포 시 변경 필요
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulation.db' # 로컬 DB 사용
+app.config['SECRET_KEY'] = 'devops-secret-key-1234'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///stock_simulation.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -20,22 +20,22 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 # ==========================================
-# 2. 데이터베이스 모델 (User, Stock)
+# 2. 데이터베이스 모델
 # ==========================================
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), unique=True, nullable=False) # 아이디
+    username = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     nickname = db.Column(db.String(100), nullable=False)
-    cash = db.Column(db.Float, default=1000000.0) # 초기 자금 100만원
+    cash = db.Column(db.Float, default=1000000.0)
     stocks = db.relationship('Stock', backref='owner', lazy=True)
 
 class Stock(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    code = db.Column(db.String(20), nullable=False) # 종목 코드 (예: 005930)
-    quantity = db.Column(db.Integer, default=0)     # 보유 수량
-    avg_price = db.Column(db.Float, default=0.0)    # 평균 매수 단가
+    code = db.Column(db.String(20), nullable=False)
+    quantity = db.Column(db.Integer, default=0)
+    avg_price = db.Column(db.Float, default=0.0)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -45,18 +45,16 @@ def load_user(user_id):
 # 3. 주식 데이터 유틸리티
 # ==========================================
 def get_current_price(code):
-    """FinanceDataReader를 이용해 현재가 조회"""
     try:
-        # 한국 주식 데이터 가져오기 (최근 데이터)
         df = fdr.DataReader(code)
         if df.empty:
             return None
-        return int(df.iloc[-1]['Close']) # 가장 최근 종가 리턴
+        return int(df.iloc[-1]['Close'])
     except:
         return None
 
 # ==========================================
-# 4. HTML 템플릿 (간편함을 위해 문자열로 내장)
+# 4. HTML 템플릿 (수정됨: PLACEHOLDER 사용)
 # ==========================================
 base_html = """
 <!DOCTYPE html>
@@ -92,11 +90,17 @@ base_html = """
                 {% endfor %}
             {% endif %}
         {% endwith %}
-        {% block content %}{% endblock %}
-    </div>
+        
+        </div>
 </body>
 </html>
 """
+
+# HTML 끼워넣기 헬퍼 함수
+def render_page(content, **kwargs):
+    # base_html의 플레이스홀더를 실제 컨텐츠로 교체
+    full_html = base_html.replace('', content)
+    return render_template_string(full_html, **kwargs)
 
 # ==========================================
 # 5. 라우트 및 비즈니스 로직
@@ -105,7 +109,6 @@ base_html = """
 @app.route('/')
 @login_required
 def home():
-    """메인 대시보드: 보유 자산 및 주식 현황"""
     total_asset = current_user.cash
     portfolio = []
     
@@ -127,11 +130,9 @@ def home():
             })
             total_asset += valuation
         else:
-            # 데이터 조회 실패 시 기존 정보만 표시
-            portfolio.append({'code': stock.code, 'current_price': 0, 'valuation': 0})
+            portfolio.append({'code': stock.code, 'current_price': 0, 'valuation': 0, 'profit': 0, 'profit_rate': 0})
 
-    return render_template_string(base_html + """
-    {% block content %}
+    content = """
         <h2>💰 {{ current_user.nickname }}님의 자산 현황</h2>
         <div class="card mb-4">
             <div class="card-body">
@@ -171,13 +172,12 @@ def home():
                 {% endfor %}
             </tbody>
         </table>
-    {% endblock %}
-    """, total_asset=total_asset, portfolio=portfolio)
+    """
+    return render_page(content, total_asset=total_asset, portfolio=portfolio)
 
 @app.route('/trade', methods=['POST'])
 @login_required
 def trade():
-    """매수/매도 로직 처리"""
     code = request.form.get('code')
     quantity = int(request.form.get('quantity'))
     action = request.form.get('action')
@@ -195,7 +195,6 @@ def trade():
         if current_user.cash >= total_price:
             current_user.cash -= total_price
             if stock:
-                # 평단가 갱신: (기존총액 + 매수총액) / 전체수량
                 total_cost = (stock.quantity * stock.avg_price) + total_price
                 stock.quantity += quantity
                 stock.avg_price = total_cost / stock.quantity
@@ -221,7 +220,6 @@ def trade():
 
 @app.route('/ranking')
 def ranking():
-    """전체 유저 랭킹 산정 (실시간 계산)"""
     users = User.query.all()
     rank_list = []
     
@@ -233,11 +231,9 @@ def ranking():
                 total_val += (price * stock.quantity)
         rank_list.append({'nickname': user.nickname, 'asset': total_val})
     
-    # 자산 순 내림차순 정렬
     rank_list.sort(key=lambda x: x['asset'], reverse=True)
     
-    return render_template_string(base_html + """
-    {% block content %}
+    content = """
         <h2>🏆 투자 랭킹</h2>
         <table class="table table-striped">
             <thead><tr><th>순위</th><th>닉네임</th><th>총 자산</th></tr></thead>
@@ -251,12 +247,11 @@ def ranking():
                 {% endfor %}
             </tbody>
         </table>
-    {% endblock %}
-    """, rank_list=rank_list)
+    """
+    return render_page(content, rank_list=rank_list)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    """회원가입"""
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -266,14 +261,12 @@ def register():
             flash('이미 존재하는 아이디입니다.')
         else:
             hashed_pw = generate_password_hash(password, method='scrypt')
-            # 초기 자금 100만원 설정 (기본값)
             new_user = User(username=username, password_hash=hashed_pw, nickname=nickname)
             db.session.add(new_user)
             db.session.commit()
             return redirect(url_for('login'))
             
-    return render_template_string(base_html + """
-    {% block content %}
+    content = """
         <h2>회원가입</h2>
         <form method="post">
             <div class="mb-3"><input type="text" name="username" class="form-control" placeholder="아이디" required></div>
@@ -281,12 +274,11 @@ def register():
             <div class="mb-3"><input type="text" name="nickname" class="form-control" placeholder="닉네임" required></div>
             <button type="submit" class="btn btn-success">가입하기 (초기자금 100만원 지급)</button>
         </form>
-    {% endblock %}
-    """)
+    """
+    return render_page(content)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """로그인"""
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -298,16 +290,15 @@ def login():
         else:
             flash('아이디 또는 비밀번호가 틀렸습니다.')
             
-    return render_template_string(base_html + """
-    {% block content %}
+    content = """
         <h2>로그인</h2>
         <form method="post">
             <div class="mb-3"><input type="text" name="username" class="form-control" placeholder="아이디" required></div>
             <div class="mb-3"><input type="password" name="password" class="form-control" placeholder="비밀번호" required></div>
             <button type="submit" class="btn btn-primary">로그인</button>
         </form>
-    {% endblock %}
-    """)
+    """
+    return render_page(content)
 
 @app.route('/logout')
 @login_required
@@ -317,5 +308,5 @@ def logout():
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()  # DB 테이블 자동 생성
+        db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
