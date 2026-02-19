@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/name: {{ app_name }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ app_name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ app_name }}
+    spec:
+      containers:
+        - name: {{ app_name }}
+          image: {{ image_ref }}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: {{ container_port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ container_port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ container_port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+spec:
+  type: {{ service_type }}
+  selector:
+    app.kubernetes.io/name: {{ app_name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{ container_port }}
+{% if service_type == 'NodePort' %}
+      nodePort: {{ node_port }}
+{% endif %}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ app_name }}-http
+  namespace: {{ namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+{% if ingress_host | length > 0 %}
+    - host: {{ ingress_host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ app_name }}
+                port:
+                  number: 80
+{% else %}
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ app_name }}
+                port:
+                  number: 80
+{% endif %}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ app_name }}-https
+  namespace: {{ namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+{% if ingress_host | length > 0 %}
+  tls:
+    - hosts:
+        - {{ ingress_host }}
+      secretName: {{ tls_secret_name }}
+{% endif %}
+  rules:
+{% if ingress_host | length > 0 %}
+    - host: {{ ingress_host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ app_name }}
+                port:
+                  number: 80
+{% else %}
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ app_name }}
+                port:
+                  number: 80
+{% endif %}
