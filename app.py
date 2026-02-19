@@ -174,7 +174,7 @@ base_html = """
 """
 
 def render_layout(content):
-    # 빈칸('')을 바꾸는 게 아니라, 플레이스홀더를 바꾸도록 수정했습니다.
+    # 이제 제대로 고쳐졌습니다!
     return render_template_string(base_html.replace('', content))
 
 # ==========================================
@@ -289,7 +289,6 @@ def board():
     cards_html = ""
     for s in top_stocks:
         color = "text-danger" if s['ChagesRatio'] > 0 else "text-primary"
-        # 따옴표 오류 방지용 치환
         safe_name = s['Name'].replace("'", "").replace('"', "")
         cards_html += f"""
         <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
@@ -400,7 +399,6 @@ def login():
         user = User.query.filter_by(username=request.form.get('username')).first()
         if user and check_password_hash(user.password_hash, request.form.get('password')):
             login_user(user)
-            # 로그인 성공 후, 원래 가려던 페이지가 있으면 거기로, 없으면 홈으로 이동
             next_page = request.args.get('next')
             return redirect(next_page or '/')
         flash("로그인 정보가 틀렸습니다.")
@@ -464,3 +462,7 @@ def register():
     </div>
     """
     return render_layout(content)
+
+if __name__ == '__main__':
+    with app.app_context(): db.create_all()
+    app.run(host='0.0.0.0', port=5000)
