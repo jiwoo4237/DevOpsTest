@@ -150,6 +150,7 @@ base_html = """
         {% with messages = get_flashed_messages() %}
             {% if messages %}<div class="alert alert-info alert-dismissible"><button type="button" class="btn-close" data-bs-dismiss="alert"></button>{{ messages[0] }}</div>{% endif %}
         {% endwith %}
+        
         </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
@@ -173,6 +174,7 @@ base_html = """
 """
 
 def render_layout(content):
+    # 빈칸('')을 바꾸는 게 아니라, 플레이스홀더를 바꾸도록 수정했습니다.
     return render_template_string(base_html.replace('', content))
 
 # ==========================================
