@@ -105,4 +105,16 @@ resource "google_compute_instance" "k3s_vm" {
     google_compute_firewall.allow_ssh,
     google_compute_firewall.allow_http_nodeport,
   ]
+
+  resource "google_compute_firewall" "flask_nodeport" {
+  name    = "allow-flask-nodeport"
+  network = "default" # 본인이 설정한 네트워크 이름
+
+  allow {
+    protocol = "tcp"
+    ports    = ["30000-32767"] # 쿠버네티스 NodePort 전체 범위 허용
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+}
 }
