@@ -16,6 +16,7 @@ db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+login_manager.login_message = "로그인이 필요한 서비스입니다."
 
 # ==========================================
 # 1. 초기 데이터 로드 (종목명 매핑)
@@ -397,9 +398,33 @@ def login():
         user = User.query.filter_by(username=request.form.get('username')).first()
         if user and check_password_hash(user.password_hash, request.form.get('password')):
             login_user(user)
-            return redirect('/')
+            # 로그인 성공 후, 원래 가려던 페이지가 있으면 거기로, 없으면 홈으로 이동
+            next_page = request.args.get('next')
+            return redirect(next_page or '/')
         flash("로그인 정보가 틀렸습니다.")
-    return render_layout("""<div class="row justify-content-center" style="margin-top: 10vh;"><div class="col-md-5 col-lg-4"><div class="card p-4 border border-info"><h3 class="text-center mb-4 text-info fw-bold">로그인</h3><form method="post"><input type="text" name="username" class="form-control mb-3" placeholder="ID" required><input type="password" name="password" class="form-control mb-3" placeholder="Password" required><button class="btn btn-info w-100 fw-bold text-dark">접속하기</button></form><div class="text-center mt-3"><a href="/register" class="text-muted">계정이 없으신가요? 회원가입</a></div></div></div></div>""")
+        
+    content = """
+    <div class="row justify-content-center" style="margin-top: 10vh;">
+        <div class="col-md-5 col-lg-4">
+            <div class="card p-4 border border-info shadow-lg">
+                <h3 class="text-center mb-4 text-info fw-bold">로그인</h3>
+                <form method="post">
+                    <div class="mb-3">
+                        <input type="text" name="username" class="form-control" placeholder="아이디" required>
+                    </div>
+                    <div class="mb-3">
+                        <input type="password" name="password" class="form-control" placeholder="비밀번호" required>
+                    </div>
+                    <button class="btn btn-info w-100 fw-bold text-dark mb-2">접속하기</button>
+                </form>
+                <div class="text-center mt-3">
+                    <a href="/register" class="text-muted text-decoration-none">계정이 없으신가요? <b>회원가입</b></a>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    return render_layout(content)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -409,13 +434,31 @@ def register():
             user = User(username=request.form.get('username'), password_hash=pw, nickname=request.form.get('nickname'))
             db.session.add(user)
             db.session.commit()
+            flash("회원가입이 완료되었습니다. 로그인해주세요!")
             return redirect('/login')
-        except: flash("이미 존재하는 아이디입니다.")
-    return render_layout("""<div class="row justify-content-center" style="margin-top: 10vh;"><div class="col-md-5 col-lg-4"><div class="card p-4 border border-success"><h3 class="text-center mb-4 text-success fw-bold">회원가입</h3><p class="text-center text-muted">축하금 1,000,000원이 지급됩니다.</p><form method="post"><input name="username" class="form-control mb-2" placeholder="ID" required><input name="password" type="password" class="form-control mb-2" placeholder="PW" required><input name="nickname" class="form-control mb-3" placeholder="닉네임 (게시판용)" required><button class="btn btn-success w-100 fw-bold">가입하기</button></form></div></div></div>""")
-
-@app.route('/logout')
-def logout(): logout_user(); return redirect('/login')
-
-if __name__ == '__main__':
-    with app.app_context(): db.create_all()
-    app.run(host='0.0.0.0', port=5000)
+        except: 
+            flash("이미 존재하는 아이디입니다.")
+            
+    content = """
+    <div class="row justify-content-center" style="margin-top: 10vh;">
+        <div class="col-md-5 col-lg-4">
+            <div class="card p-4 border border-success shadow-lg">
+                <h3 class="text-center mb-3 text-success fw-bold">회원가입</h3>
+                <p class="text-center text-muted mb-4">가입 시 축하금 <b>1,000,000원</b>이 지급됩니다.</p>
+                <form method="post">
+                    <div class="mb-2">
+                        <input name="username" class="form-control" placeholder="사용할 아이디" required>
+                    </div>
+                    <div class="mb-2">
+                        <input name="password" type="password" class="form-control" placeholder="비밀번호" required>
+                    </div>
+                    <div class="mb-4">
+                        <input name="nickname" class="form-control" placeholder="닉네임 (게시판 노출용)" required>
+                    </div>
+                    <button class="btn btn-success w-100 fw-bold">가입 완료하기</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    """
+    return render_layout(content)
