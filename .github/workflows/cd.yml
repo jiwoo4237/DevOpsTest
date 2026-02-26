@@ -1,24 +1,36 @@
-# .github/workflows/cd.yml
-name: CD – Build, Push & Deploy to GCE
+name: CD - Build, Push & Deploy to GCE k3s
 
 on:
   push:
     branches: [ main ]
-    tags: [ "v*.*.*" ]
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
 
-###############################################################################
-# 1) Build & Push to Docker Hub
-###############################################################################
+permissions:
+  contents: read
+
 jobs:
-  build-and-push:
+  build_and_push:
     runs-on: ubuntu-latest
     outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-      image-digest: ${{ steps.build.outputs.digest }}
+      image_tags: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+
+      - name: Validate build secrets
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "ERROR: Secret 'DOCKERHUB_USERNAME' is empty." >&2
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "ERROR: Secret 'DOCKERHUB_TOKEN' is empty." >&2
+            exit 1
+          fi
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -30,7 +42,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/myflask
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/flask-app
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
@@ -38,7 +50,7 @@ jobs:
 
       - name: Build & Push image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -46,19 +58,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-  
-  security-gate:
-    needs: build-and-push
+
+      - name: Validate image digest output
+        run: |
+          set -euo pipefail
+          if [ -z "${{ steps.build.outputs.digest }}" ]; then
+            echo "ERROR: build.outputs.digest is empty." >&2
+            exit 1
+          fi
+
+  security_gate:
+    needs: build_and_push
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
       security-events: write
     env:
-      IMG: ${{ secrets.DOCKERHUB_USERNAME }}/myflask@${{ needs.build-and-push.outputs.image-digest }}
+      IMAGE_DIGEST: ${{ needs.build_and_push.outputs.image_digest }}
+      IMG: ${{ secrets.DOCKERHUB_USERNAME }}/flask-app@${{ needs.build_and_push.outputs.image_digest }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate security-gate inputs
+        run: |
+          set -euo pipefail
+          if [ -z "${IMAGE_DIGEST:-}" ]; then
+            echo "ERROR: IMAGE_DIGEST is empty. Check build_and_push outputs.image_digest." >&2
+            exit 1
+          fi
+          if [ -z "${IMG:-}" ]; then
+            echo "ERROR: IMG is empty. Check DOCKERHUB_USERNAME and IMAGE_DIGEST." >&2
+            exit 1
+          fi
 
       - name: Trivy image scan (HIGH/CRIT fail)
         uses: aquasecurity/trivy-action@0.28.0
@@ -73,12 +106,11 @@ jobs:
           scanners: 'vuln'
 
       - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: ${{ always() && hashFiles('trivy-image.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image.sarif
 
-      # <- 여기부터가 들여쓰기 깨져 있었음 (고쳐서 제공)
       - name: Trivy JSON (for SeveritySource)
         if: always()
         run: |
@@ -90,7 +122,7 @@ jobs:
             -f json -o trivy-image.json "${IMG}" || true
 
       - name: Upload Trivy JSON
-        if: always()
+        if: ${{ always() && hashFiles('trivy-image.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-json
@@ -114,7 +146,8 @@ jobs:
         uses: sigstore/cosign-installer@v3.9.2
 
       - name: Cosign sign & attest (keyless)
-        env: { COSIGN_EXPERIMENTAL: "1" }
+        env:
+          COSIGN_EXPERIMENTAL: "1"
         run: |
           set -euo pipefail
           cosign sign --yes "$IMG"
@@ -127,28 +160,45 @@ jobs:
           path: sbom.spdx.json
           retention-days: 30
 
-###############################################################################
-# 2) Deploy to GCE VM
-###############################################################################
   deploy:
-    needs: [build-and-push, security-gate]
+    needs: [ build_and_push, security_gate ]
     runs-on: ubuntu-latest
     env:
-      REMOTE_DIR: ${{ secrets.REMOTE_APP_DIR }}
+      GCP_HOST: ${{ secrets.GCP_HOST }}
+      GCP_USER: ${{ secrets.GCP_USER }}
       DOMAIN: ${{ secrets.DOMAIN }}
       LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
-      IMAGE_TAG: ${{ github.sha }}
-      IMAGE_DIGEST: ${{ needs.build-and-push.outputs.image-digest }}
-      IMG: ${{ secrets.DOCKERHUB_USERNAME }}/myflask@${{ needs.build-and-push.outputs.image-digest }}
+      IMAGE_DIGEST: ${{ needs.build_and_push.outputs.image_digest }}
+      IMG: ${{ secrets.DOCKERHUB_USERNAME }}/flask-app@${{ needs.build_and_push.outputs.image_digest }}
+      K3S_NODE_PORT: ${{ vars.K3S_NODE_PORT }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate deploy secrets
+        run: |
+          set -euo pipefail
+          required=(GCP_HOST GCP_USER IMG)
+          for v in "${required[@]}"; do
+            if [ -z "${!v:-}" ]; then
+              echo "ERROR: Required env '$v' is empty." >&2
+              exit 1
+            fi
+          done
+          if [ -z "${{ secrets.GCP_SSH_KEY }}" ]; then
+            echo "ERROR: Secret 'GCP_SSH_KEY' is empty." >&2
+            exit 1
+          fi
+          if [ -n "${DOMAIN:-}" ] && [ -z "${LETSENCRYPT_EMAIL:-}" ]; then
+            echo "WARN: DOMAIN is set but LETSENCRYPT_EMAIL is empty. certbot will use no-email registration." >&2
+          fi
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.9.2
 
       - name: Verify image signature (keyless)
-        env: { COSIGN_EXPERIMENTAL: "1" }
+        env:
+          COSIGN_EXPERIMENTAL: "1"
         run: |
           set -euo pipefail
           cosign verify \
@@ -157,7 +207,6 @@ jobs:
             "${IMG}" >/dev/null
           echo "Cosign verify OK for ${IMG}"
 
-      # ── 0. SSH 준비 ──────────────────────────────────────────────────────
       - name: Set up SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -165,165 +214,77 @@ jobs:
 
       - name: Add host key
         run: |
-          ssh-keyscan -H ${{ secrets.GCP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$GCP_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
           if [ -n "${{ secrets.GCP_HOST_KEY }}" ]; then
             echo "${{ secrets.GCP_HOST_KEY }}" >> ~/.ssh/known_hosts
           fi
 
       - name: Test SSH
-        run: ssh -o ConnectTimeout=10 ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "echo OK"
+        run: ssh -o ConnectTimeout=10 "$GCP_USER@$GCP_HOST" "echo OK"
 
-      # ── 1. 디렉터리 & .env ──────────────────────────────────────────────
-      - name: Prepare remote directory & .env
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} <<'EOF'
-            set -euo pipefail
-            mkdir -p "${{ env.REMOTE_DIR }}"/{nginx,certbot/{config,www,logs}}
-            cat > "${{ env.REMOTE_DIR }}/.env" <<EOT
-            DOMAIN=${{ env.DOMAIN }}
-            LETSENCRYPT_EMAIL=${{ env.LETSENCRYPT_EMAIL }}
-            IMAGE_REF=${{ env.IMG }}
-            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-            EOT
-          EOF
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      # ── 2. HTTP-only 템플릿 & Compose 업로드 ─────────────────────────────
-      - name: Upload HTTP-only Nginx template and compose
+      - name: Install Ansible
         run: |
-          scp -o StrictHostKeyChecking=no nginx/default.http.conf.template \
-            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:"${{ env.REMOTE_DIR }}/nginx/default.conf.template"
-          scp -o StrictHostKeyChecking=no docker-compose.prod.yml \
-            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:"${{ env.REMOTE_DIR }}/"
+          python -m pip install --upgrade pip
+          pip install ansible-core
 
-      # ── 3. 스택 기동 (80) ───────────────────────────────────────────────
-      - name: Start HTTP-only stack
+      - name: Build dynamic inventory
         run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "
-            cd '${{ env.REMOTE_DIR }}' &&
-            docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
-            docker compose -f docker-compose.prod.yml up -d nginx web
-          "
+          cat > ansible/inventory/gce_k3s.ini <<EOF_INV
+          [k3s_nodes]
+          ${GCP_HOST} ansible_user=${GCP_USER}
+          EOF_INV
 
-      # ── 4. HTTP 응답 대기 ───────────────────────────────────────────────
-      - name: Wait for HTTP
+      - name: Deploy k3s workload with Ansible
+        env:
+          IMAGE_REF: ${{ env.IMG }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          INGRESS_HOST: ${{ secrets.DOMAIN }}
+          LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+          TLS_SECRET_NAME: ${{ vars.TLS_SECRET_NAME }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+          REPLICAS: ${{ vars.REPLICAS }}
+          SERVICE_TYPE: ${{ vars.SERVICE_TYPE }}
+          K3S_NODE_PORT: ${{ vars.K3S_NODE_PORT }}
         run: |
-          for i in {1..24}; do
-            if curl -sSf -m 5 http://${{ env.DOMAIN }} >/dev/null 2>&1; then
-              echo "HTTP OK"; break
+          ANSIBLE_CONFIG=ansible/ansible.cfg \
+          ansible-playbook -i ansible/inventory/gce_k3s.ini ansible/playbooks/deploy-gce-k3s.yml
+
+      - name: Verify app endpoint (80/443 via ingress)
+        run: |
+          set -euo pipefail
+          HOST="${DOMAIN:-$GCP_HOST}"
+          for i in $(seq 1 24); do
+            if curl -kfsS -m 5 -o /dev/null "https://${HOST}/"; then
+              echo "App OK (HTTPS): https://${HOST}/"
+              exit 0
             fi
-            echo "...waiting HTTP (${i}/24)"; sleep 5
-          done
-
-      # ── 5. 인증서 발급/갱신 ──────────────────────────────────────────────
-      - name: Issue / Renew SSL
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "
-            cd '${{ env.REMOTE_DIR }}' &&
-            docker compose -f docker-compose.prod.yml run --rm certbot \
-              certonly --webroot -w /var/www/certbot \
-              --non-interactive --keep-until-expiring \
-              --email '${{ env.LETSENCRYPT_EMAIL }}' -d '${{ env.DOMAIN }}' \
-              --agree-tos --no-eff-email --rsa-key-size 4096
-          "
-
-      # ── 6. SSL helper 파일 확보(+디렉터리 보장) ──────────────────────────
-      - name: Provide ssl helper files for nginx
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} <<'EOF'
-            cd '${{ env.REMOTE_DIR }}'
-            docker compose -f docker-compose.prod.yml run --rm --entrypoint "" certbot sh -euxc '
-              OPTIONS=/etc/letsencrypt/options-ssl-nginx.conf
-              DHPARAM=/etc/letsencrypt/ssl-dhparams.pem
-
-              # 0) 반드시 디렉터리 확보
-              mkdir -p /etc/letsencrypt
-
-              # 1) options-ssl-nginx.conf 확보
-              if [ ! -f "$OPTIONS" ]; then
-                SRC=$(find /usr /opt -maxdepth 7 -type f -name options-ssl-nginx.conf 2>/dev/null | head -n1 || true)
-                if [ -n "$SRC" ]; then
-                  cp "$SRC" "$OPTIONS"
-                elif command -v curl >/dev/null 2>&1; then
-                  curl -fsSL \
-                    https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
-                    -o "$OPTIONS" || true
-                fi
-              fi
-
-              # 1-b) 최소 TLS 설정 (fallback)
-              if [ ! -s "$OPTIONS" ]; then
-                printf "%s\n" \
-                  "ssl_session_cache   shared:SSL:10m;" \
-                  "ssl_session_timeout 1h;" \
-                  "ssl_prefer_server_ciphers on;" \
-                  "ssl_protocols TLSv1.2 TLSv1.3;" \
-                  "ssl_ciphers EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH;" \
-                  > "$OPTIONS"
-              fi
-
-              # 2) ssl-dhparams.pem (없으면 2048bit 생성)
-              if [ ! -f "$DHPARAM" ]; then
-                openssl dhparam -out "$DHPARAM" 2048
-              fi
-            '
-          EOF
-
-      # ── 7. HTTPS 템플릿 업로드 ───────────────────────────────────────────
-      - name: Upload HTTPS Nginx template
-        run: |
-          scp -o StrictHostKeyChecking=no nginx/default.https.conf.template \
-            ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:"${{ env.REMOTE_DIR }}/nginx/default.conf.template"
-
-      # ── 8. conf 재생성 & nginx reload ───────────────────────────────────
-      - name: Apply HTTPS config & reload nginx
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} <<'EOF'
-            cd '${{ env.REMOTE_DIR }}' &&
-            docker compose -f docker-compose.prod.yml exec nginx sh -c '
-              # 모든 환경변수 치환 (여기선 DOMAIN)
-              envsubst '\''$DOMAIN'\'' \
-                < /etc/nginx/templates/default.conf.template \
-                > /etc/nginx/conf.d/default.conf \
-              && nginx -s reload
-            '
-          EOF
-
-      # ── 9. 최신 이미지 pull & 전체 스택 ─────────────────────────────────
-      - name: Deploy latest stack
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "
-            cd '${{ env.REMOTE_DIR }}' &&
-            docker compose -f docker-compose.prod.yml pull &&
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-          "
-
-      # ── 10. HTTPS 검증 ──────────────────────────────────────────────────
-      - name: Verify HTTPS
-        run: |
-          for i in {1..12}; do
-            if curl -sSf -m 5 https://${{ env.DOMAIN }} >/dev/null 2>&1; then
-              echo "HTTPS OK"; break
+            if curl -fsS -m 5 -o /dev/null "http://${HOST}/"; then
+              echo "App OK (HTTP): http://${HOST}/"
+              exit 0
             fi
-            echo "...waiting HTTPS (${i}/12)"; sleep 10
+            echo "...waiting ingress (${i}/24)"
+            sleep 5
           done
+          echo "ERROR: Ingress endpoint did not become ready in time (host=${HOST})" >&2
+          exit 1
 
-      # ── 11. 오래된 이미지 정리 ──────────────────────────────────────────
-      - name: Prune images
-        run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} "docker image prune -f --filter 'until=24h' || true"
-
-###############################################################################
-# 3) 통합 알림 (콘솔)
-###############################################################################
   notify:
-    needs: [ build-and-push, deploy ]
+    needs: [ build_and_push, deploy ]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Success notice
         if: success()
-        run: echo "Deployed to ${{ secrets.DOMAIN }}"
+        run: echo "Deployed to ${{ secrets.GCP_HOST }}"
 
       - name: Failure notice
         if: failure()
-        run: echo "Deployment to ${{ secrets.DOMAIN }} failed"
+        run: echo "Deployment to ${{ secrets.GCP_HOST }} failed"
